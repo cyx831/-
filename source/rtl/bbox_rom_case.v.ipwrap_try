@@ -1,0 +1,51 @@
+module bbox_rom #(
+    parameter TILES  = 3600,
+    parameter ADDR_W = 12
+)(
+    input                     clk,
+    input      [ADDR_W-1:0]   tile_idx,
+    output [11:0]             win_x0,
+    output [11:0]             win_y0,
+    output                    tile_valid
+);
+    wire [31:0] dout;
+    ipml_sdpram_v1_6_wr_fram_buf #(
+        .c_SIM_DEVICE        ("LOGOS"),
+        .c_WR_ADDR_WIDTH     (12),
+        .c_WR_DATA_WIDTH     (32),
+        .c_RD_ADDR_WIDTH     (12),
+        .c_RD_DATA_WIDTH     (32),
+        .c_OUTPUT_REG        (0),
+        .c_RD_OCE_EN         (0),
+        .c_WR_ADDR_STROBE_EN (0),
+        .c_RD_ADDR_STROBE_EN (0),
+        .c_WR_CLK_EN         (0),
+        .c_RD_CLK_EN         (0),
+        .c_RD_CLK_OR_POL_INV (0),
+        .c_RESET_TYPE        ("ASYNC_RESET"),
+        .c_POWER_OPT         (0),
+        .c_INIT_FILE         ("bbox_rom.hex"),
+        .c_INIT_FORMAT       ("HEX"),
+        .c_WR_BYTE_EN        (0),
+        .c_BE_WIDTH          (4)
+    ) u_ram (
+        .wr_data        (32'd0),
+        .wr_addr        (12'd0),
+        .wr_en          (1'b0),
+        .wr_clk         (clk),
+        .wr_clk_en      (1'b1),
+        .wr_rst         (1'b0),
+        .wr_byte_en     (4'hf),
+        .wr_addr_strobe (1'b0),
+        .rd_data        (dout),
+        .rd_addr        (tile_idx),
+        .rd_clk         (clk),
+        .rd_clk_en      (1'b1),
+        .rd_rst         (1'b0),
+        .rd_oce         (1'b1),
+        .rd_addr_strobe (1'b0)
+    );
+    assign win_x0     = dout[23:12];
+    assign win_y0     = dout[11:0];
+    assign tile_valid = dout[24];
+endmodule

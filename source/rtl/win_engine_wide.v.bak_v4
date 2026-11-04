@@ -1,0 +1,146 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Module : win_engine_wide
+//   128-bit fill: 8 RGB565 pixels per pclk; 4 writes per row, 32 rows =
+//   128 pclk/tile (< 256 pclk tile period).
+//////////////////////////////////////////////////////////////////////////////////
+module win_engine_wide #(
+    parameter TILES = 3600,
+    parameter TILE  = 16,
+    parameter WIN   = 32
+)(
+    input               pclk,
+    input               rstn,           // init_done
+    input               frame_start,
+    input               tile_advance,   // 1 pulse per output tile
+    input               win_clear,      // clear win_ready before a new fill
+
+    output [11:0]       tile_idx,
+    output [11:0]       win_x0,
+    output [11:0]       win_y0,
+    output              tile_valid,
+    output reg          win_ready,
+
+    // fill port: current tile's 32x32 window
+    input               fill_we,
+    input      [4:0]    fill_row,
+    input      [1:0]    fill_col8,
+    input      [127:0]  fill_data,
+    input               fill_done,
+
+    // pair read: local window coordinates
+    input      [9:0]    src_x,
+    input      [9:0]    src_y,
+    output reg [63:0]   row0_pair,
+    output reg [63:0]   row1_pair,
+    output reg          win_valid
+);
+
+    //------------------------------------------------------------------
+    // tile index
+    //------------------------------------------------------------------
+    reg [11:0] tidx;
+    assign tile_idx = tidx;
+
+    always @(posedge pclk) begin
+        if (!rstn)
+            tidx <= 12'd0;
+        else if (frame_start)
+            tidx <= 12'd0;
+        else if (tile_advance)
+            tidx <= (tidx == TILES-1) ? 12'd0 : tidx + 12'd1;
+    end
+
+    //------------------------------------------------------------------
+    // bbox table -> window origin
+    //------------------------------------------------------------------
+    wire [11:0] bx0, by0;
+    wire        bvalid;
+
+    bbox_rom #(
+        .TILES  (TILES),
+        .ADDR_W (12)
+    ) u_bbox_rom (
+        .clk        (pclk),
+        .tile_idx   (tidx),
+        .win_x0     (bx0),
+        .win_y0     (by0),
+        .tile_valid (bvalid)
+    );
+
+    assign win_x0     = bx0;
+    assign win_y0     = by0;
+    assign tile_valid = bvalid;
+
+    //------------------------------------------------------------------
+    // window ready / double buffer
+    //------------------------------------------------------------------
+    always @(posedge pclk) begin
+        if (!rstn || frame_start || win_clear)
+            win_ready <= 1'b0;
+        else if (tile_advance)
+            win_ready <= 1'b0;
+        else if (fill_done)
+            win_ready <= 1'b1;
+    end
+
+    // 2 buffers x 32 rows x 32 pixels, RGB565, flattened to one 2D array
+    reg [15:0] mem [0:2047];
+    wire       fill_buf = tidx[0];
+    wire [10:0] wbase = {fill_buf, fill_row, fill_col8, 3'b000};
+    integer fk;
+
+    always @(posedge pclk) begin
+        if (fill_we)
+            for (fk = 0; fk < 8; fk = fk + 1)
+                mem[wbase + fk] <= fill_data[fk*16 +: 16];
+    end
+
+    //------------------------------------------------------------------
+    // pair read pipeline (fixed 2 pclk)
+    //   t   : src_x/src_y sampled
+    //   t+1 : address registered, memory read
+    //   t+2 : pair / win_valid registered
+    //------------------------------------------------------------------
+    reg [9:0] sx_d1, sy_d1;
+    reg       buf_d1, ready_d1;
+
+    always @(posedge pclk) begin
+        sx_d1    <= src_x;
+        sy_d1    <= src_y;
+        buf_d1   <= tidx[0];
+        ready_d1 <= win_ready;
+    end
+
+    wire [4:0] k  = sx_d1[4:1];
+    wire [5:0] i0 = {1'b0, k, 1'b0};       // 2k
+    wire [5:0] i1 = i0 + 6'd1;
+    wire [5:0] i2 = i0 + 6'd2;
+    wire [5:0] i3 = i0 + 6'd3;
+
+    // direct flat-memory reads (i0..i3 are 2k .. 2k+3)
+    wire [4:0] r1y = sy_d1[4:0] + 5'd1;
+
+    wire [15:0] r0p0 = (i0 < 6'd32) ? mem[{buf_d1, sy_d1[4:0], i0[4:0]}] : 16'd0;
+    wire [15:0] r0p1 = (i1 < 6'd32) ? mem[{buf_d1, sy_d1[4:0], i1[4:0]}] : 16'd0;
+    wire [15:0] r0p2 = (i2 < 6'd32) ? mem[{buf_d1, sy_d1[4:0], i2[4:0]}] : 16'd0;
+    wire [15:0] r0p3 = (i3 < 6'd32) ? mem[{buf_d1, sy_d1[4:0], i3[4:0]}] : 16'd0;
+    wire [15:0] r1p0 = (i0 < 6'd32) ? mem[{buf_d1, r1y, i0[4:0]}] : 16'd0;
+    wire [15:0] r1p1 = (i1 < 6'd32) ? mem[{buf_d1, r1y, i1[4:0]}] : 16'd0;
+    wire [15:0] r1p2 = (i2 < 6'd32) ? mem[{buf_d1, r1y, i2[4:0]}] : 16'd0;
+    wire [15:0] r1p3 = (i3 < 6'd32) ? mem[{buf_d1, r1y, i3[4:0]}] : 16'd0;
+
+    always @(posedge pclk) begin
+        if (!rstn) begin
+            row0_pair <= 64'd0;
+            row1_pair <= 64'd0;
+            win_valid <= 1'b0;
+        end
+        else begin
+            row0_pair <= {r0p3, r0p2, r0p1, r0p0};
+            row1_pair <= {r1p3, r1p2, r1p1, r1p0};
+            win_valid <= ready_d1 && (sx_d1 < 10'd31) && (sy_d1 < 10'd31);
+        end
+    end
+
+endmodule

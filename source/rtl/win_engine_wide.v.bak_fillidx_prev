@@ -1,0 +1,138 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// win_engine_wide (single buffer, refill between tiles)
+//////////////////////////////////////////////////////////////////////////////////
+module win_engine_wide #(
+    parameter TILES = 3600,
+    parameter TILE  = 16,
+    parameter WIN   = 32
+)(
+    input               pclk,
+    input               rstn,
+    input               frame_start,
+    input               tile_advance,
+    input               start,
+
+    output [11:0]       tile_idx,
+    output [11:0]       win_x0,
+    output [11:0]       win_y0,
+    output [11:0]       next_win_x0,
+    output [11:0]       next_win_y0,
+    output              next_tile_valid,
+    output reg          win_ready,
+    output reg          next_ready,
+
+    input               fill_we,
+    input      [4:0]    fill_row,
+    input      [1:0]    fill_col8,
+    input      [127:0]  fill_data,
+    input               fill_done,
+
+    input      [9:0]    src_x,
+    input      [9:0]    src_y,
+    output reg [63:0]   row0_pair,
+    output reg [63:0]   row1_pair,
+    output reg          win_valid
+);
+
+    reg [11:0] cur_idx, nxt_idx;
+    reg [11:0] cur_x0, cur_y0;
+
+    assign tile_idx = cur_idx;
+    assign win_x0   = cur_x0;
+    assign win_y0   = cur_y0;
+
+    wire [11:0] bx0, by0;
+    wire        bvalid;
+
+    bbox_rom #(
+        .TILES  (TILES),
+        .ADDR_W (12)
+    ) u_bbox_rom (
+        .clk        (pclk),
+        .tile_idx   (nxt_idx),
+        .win_x0     (bx0),
+        .win_y0     (by0),
+        .tile_valid (bvalid)
+    );
+
+    assign next_win_x0     = bx0;
+    assign next_win_y0     = by0;
+    assign next_tile_valid = bvalid;
+
+    always @(posedge pclk) begin
+        if (!rstn || frame_start) begin
+            cur_idx    <= 12'd0;
+            nxt_idx    <= 12'd0;
+            cur_x0     <= 12'd0;
+            cur_y0     <= 12'd0;
+            win_ready  <= 1'b0;
+            next_ready <= 1'b0;
+        end
+        else if (tile_advance) begin
+            cur_idx    <= nxt_idx;
+            cur_x0     <= bx0;
+            cur_y0     <= by0;
+            win_ready  <= 1'b0;
+            nxt_idx    <= (nxt_idx == TILES-1) ? 12'd0 : nxt_idx + 12'd1;
+            next_ready <= 1'b0;
+        end
+        else if (start) begin
+            win_ready  <= 1'b1;
+            next_ready <= 1'b0;
+        end
+        else if (fill_done) begin
+            next_ready <= 1'b1;
+        end
+    end
+
+    // 1 buffer x 32 x 32 x 16 bit
+    reg [15:0] mem [0:1023];
+    wire [9:0] wbase = {fill_row, fill_col8, 3'b000};
+    integer fk;
+
+    always @(posedge pclk) begin
+        if (fill_we)
+            for (fk = 0; fk < 8; fk = fk + 1)
+                mem[wbase + fk] <= fill_data[fk*16 +: 16];
+    end
+
+    reg [9:0] sx_d1, sy_d1;
+    reg       ready_d1;
+
+    always @(posedge pclk) begin
+        sx_d1    <= src_x;
+        sy_d1    <= src_y;
+        ready_d1 <= win_ready;
+    end
+
+    wire [4:0] k  = sx_d1[4:1];
+    wire [5:0] i0 = {1'b0, k, 1'b0};
+    wire [5:0] i1 = i0 + 6'd1;
+    wire [5:0] i2 = i0 + 6'd2;
+    wire [5:0] i3 = i0 + 6'd3;
+    wire [4:0] r1y = sy_d1[4:0] + 5'd1;
+
+    wire [15:0] r0p0 = (i0 < 6'd32) ? mem[{sy_d1[4:0], i0[4:0]}] : 16'd0;
+    wire [15:0] r0p1 = (i1 < 6'd32) ? mem[{sy_d1[4:0], i1[4:0]}] : 16'd0;
+    wire [15:0] r0p2 = (i2 < 6'd32) ? mem[{sy_d1[4:0], i2[4:0]}] : 16'd0;
+    wire [15:0] r0p3 = (i3 < 6'd32) ? mem[{sy_d1[4:0], i3[4:0]}] : 16'd0;
+    wire [15:0] r1p0 = (i0 < 6'd32) ? mem[{r1y, i0[4:0]}] : 16'd0;
+    wire [15:0] r1p1 = (i1 < 6'd32) ? mem[{r1y, i1[4:0]}] : 16'd0;
+    wire [15:0] r1p2 = (i2 < 6'd32) ? mem[{r1y, i2[4:0]}] : 16'd0;
+    wire [15:0] r1p3 = (i3 < 6'd32) ? mem[{r1y, i3[4:0]}] : 16'd0;
+
+    always @(posedge pclk) begin
+        if (!rstn) begin
+            row0_pair <= 64'd0;
+            row1_pair <= 64'd0;
+            win_valid <= 1'b0;
+        end
+        else begin
+            row0_pair <= {r0p3, r0p2, r0p1, r0p0};
+            row1_pair <= {r1p3, r1p2, r1p1, r1p0};
+            win_valid <= ready_d1 && (sx_d1 < 10'd31) && (sy_d1 < 10'd31);
+        end
+    end
+
+endmodule

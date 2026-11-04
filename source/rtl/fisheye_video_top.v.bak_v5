@@ -1,0 +1,241 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// fisheye_video_top (functional integration v1)
+//
+//   tile_scan_gen -> fisheye_core (corr_top + band_wr)
+//        ^                    ^
+//        |                    | win_x0/win_y0/pair/win_valid
+//        |              win_engine_wide  <- bbox_rom_case
+//        |                    ^ fill 128bit
+//        |              tile_reader_wide
+//        |                    ^ tr_*
+//        |              tile_rd_bridge  <->  ddr_* (wr_rd_ctrl_top)
+//
+// Scheduler is the functional fill->run flow (not yet prefetch):
+//   fill 128 + run 256 + drain 25 = ~409 pclk/tile, ~27 fps.
+// For 30 fps, start the next tile's fill during the current tile's 256 pixels
+// (see README_integration.md section 3).
+//
+// HDMI band reader is outside: drive rd_band_sel/rd_addr/rd_done, use rd_data.
+//////////////////////////////////////////////////////////////////////////////////
+module fisheye_video_top (
+    input  wire        pclk,
+    input  wire        rstn,
+
+    // DDR read command (connect to wr_rd_ctrl_top rd_cmd/read_*)
+    input  wire        ddr_clk,
+    input  wire        ddr_rstn,
+    output wire        ddr_rreq,
+    output wire [27:0] ddr_raddr,
+    output wire [31:0] ddr_rd_len,
+    input  wire        ddr_rrdy,
+    input  wire        ddr_rdone,
+    input  wire [255:0] ddr_rdata,
+    input  wire        ddr_rdata_en,
+
+    input  wire        frame_idx,       // ~frame_wcnt[0] (last completed frame)
+
+    // band read port (HDMI)
+    input  wire        rd_band_sel,
+    input  wire [14:0] rd_addr,
+    output wire [15:0] rd_data,
+    input  wire        rd_done,
+    output wire        band_ready,
+    output wire        band_done,
+    output wire        band_idx,
+
+    // debug / observation
+    output wire [11:0] win_x0,
+    output wire [11:0] win_y0,
+    output wire [11:0] tile_idx,
+    output wire        win_ready
+);
+
+    reg         enable;
+    wire [11:0] u, v;
+    wire        de_tile;
+    wire [6:0]  tile_tx;
+    wire [5:0]  tile_ty;
+    wire        tile_start;
+
+    tile_scan_gen u_scan (
+        .clk(pclk), .rstn(rstn), .enable(enable),
+        .u_out(u), .v_out(v), .de_out(de_tile),
+        .tile_tx(tile_tx), .tile_ty(tile_ty), .tile_start(tile_start)
+    );
+
+    wire        fill_we;
+    wire [4:0]  fill_row;
+    wire [1:0]  fill_col8;
+    wire [127:0] fill_data;
+    wire        fill_done;
+    wire [11:0] src_x, src_y;
+    wire [63:0] row0_pair, row1_pair;
+    wire        win_valid;
+    wire        tile_valid;
+    reg         tile_advance;
+    reg         win_clear;
+
+    win_engine_wide #(.TILES(3600), .TILE(16), .WIN(32)) u_win (
+        .pclk(pclk), .rstn(rstn), .frame_start(1'b0),
+        .tile_advance(tile_advance), .win_clear(win_clear),
+        .tile_idx(tile_idx), .win_x0(win_x0), .win_y0(win_y0),
+        .tile_valid(tile_valid), .win_ready(win_ready),
+        .fill_we(fill_we), .fill_row(fill_row), .fill_col8(fill_col8),
+        .fill_data(fill_data), .fill_done(fill_done),
+        .src_x(src_x[9:0]), .src_y(src_y[9:0]),
+        .row0_pair(row0_pair), .row1_pair(row1_pair), .win_valid(win_valid)
+    );
+
+    wire        tr_rreq;
+    wire [27:0] tr_raddr;
+    wire [7:0]  tr_rlen;
+    wire        tr_rrdy;
+    wire [255:0] tr_rdata;
+    wire        tr_rdata_en;
+    wire        tr_rdone;
+    reg         tr_start;
+
+    tile_reader_wide #(.ADDR_WIDTH(28), .LINE_WORDS(640)) u_tr (
+        .pclk(pclk), .rstn(rstn), .start(tr_start),
+        .win_x0(win_x0), .win_y0(win_y0), .frame_idx(frame_idx),
+        .tr_rreq(tr_rreq), .tr_raddr(tr_raddr), .tr_rlen(tr_rlen),
+        .tr_rrdy(tr_rrdy), .tr_rdata(tr_rdata), .tr_rdata_en(tr_rdata_en),
+        .tr_rdone(tr_rdone),
+        .fill_we(fill_we), .fill_row(fill_row), .fill_col8(fill_col8),
+        .fill_data(fill_data), .fill_done(fill_done), .busy()
+    );
+
+    tile_rd_bridge u_br (
+        .pclk(pclk), .prstn(rstn),
+        .tr_rreq(tr_rreq), .tr_raddr(tr_raddr), .tr_rlen(tr_rlen),
+        .tr_rrdy(tr_rrdy), .tr_rdata(tr_rdata), .tr_rdata_en(tr_rdata_en),
+        .tr_rdone(tr_rdone),
+        .ddr_clk(ddr_clk), .ddr_rstn(ddr_rstn),
+        .ddr_rreq(ddr_rreq), .ddr_raddr(ddr_raddr), .ddr_rd_len(ddr_rd_len),
+        .ddr_rrdy(ddr_rrdy), .ddr_rdone(ddr_rdone),
+        .ddr_rdata(ddr_rdata), .ddr_rdata_en(ddr_rdata_en)
+    );
+
+    wire vs_c, hs_c, de_c;
+    wire [15:0] rgb_c;
+
+    fisheye_core u_core (
+        .clk(pclk), .rstn(rstn),
+        .vs_in(1'b0), .hs_in(1'b0), .de_in(de_tile),
+        .u(u), .v(v),
+        .win_x0(win_x0), .win_y0(win_y0),
+        .row0_pair(row0_pair), .row1_pair(row1_pair),
+        .win_valid(win_valid),
+        .src_x(src_x), .src_y(src_y),
+        .vs_out(vs_c), .hs_out(hs_c), .de_out(de_c),
+        .rgb_out(rgb_c),
+        .rd_band_sel(rd_band_sel), .rd_addr(rd_addr), .rd_data(rd_data),
+        .rd_done(rd_done),
+        .band_ready(band_ready), .band_done(band_done), .band_idx(band_idx)
+    );
+
+    //------------------------------------------------------------------
+    // functional scheduler
+    //------------------------------------------------------------------
+    localparam S_ORIGIN = 3'd0;
+    localparam S_START  = 3'd1;
+    localparam S_WAIT   = 3'd2;
+    localparam S_RUN    = 3'd3;
+    localparam S_DRAIN  = 3'd4;
+    localparam S_BAND   = 3'd5;
+    localparam S_CLEAR  = 3'd6;
+
+    reg [2:0] st;
+    reg [2:0] wait2;
+    reg [7:0] pixcnt;
+    reg [6:0] tilecnt;
+    reg [4:0] drain;
+
+    always @(posedge pclk) begin
+        if (!rstn) begin
+            st           <= S_CLEAR;
+            wait2        <= 3'd0;
+            pixcnt       <= 8'd0;
+            tilecnt      <= 7'd0;
+            drain        <= 5'd0;
+            tr_start     <= 1'b0;
+            tile_advance <= 1'b0;
+            win_clear    <= 1'b0;
+            enable       <= 1'b0;
+        end
+        else begin
+            tr_start     <= 1'b0;
+            tile_advance <= 1'b0;
+            win_clear    <= 1'b0;
+
+            case (st)
+                S_CLEAR: begin
+                    win_clear <= 1'b1;
+                    wait2     <= 3'd0;
+                    st        <= S_ORIGIN;
+                end
+
+                S_ORIGIN: begin
+                    if (wait2 == 3'd2) begin
+                        wait2 <= 3'd0;
+                        st    <= S_START;
+                    end
+                    else wait2 <= wait2 + 3'd1;
+                end
+
+                S_START: begin
+                    tr_start <= 1'b1;
+                    st       <= S_WAIT;
+                end
+
+                S_WAIT: begin
+                    if (win_ready) begin
+                        enable <= 1'b1;
+                        pixcnt <= 8'd0;
+                        st     <= S_RUN;
+                    end
+                end
+
+                S_RUN: begin
+                    // fixed 256-cycle run (matches the verified TB flow);
+                    // do NOT count de_tile: de_out is registered one cycle
+                    // after enable and the first de_tile would be missed.
+                    if (pixcnt == 8'd255) begin
+                        enable <= 1'b0;
+                        drain  <= 5'd0;
+                        st     <= S_DRAIN;
+                    end
+                    else pixcnt <= pixcnt + 8'd1;
+                end
+
+                S_DRAIN: begin
+                    if (drain == 5'd24) begin
+                        tile_advance <= 1'b1;
+                        if (tilecnt == 7'd79) begin
+                            tilecnt <= 7'd0;
+                            st      <= S_BAND;
+                        end
+                        else begin
+                            tilecnt <= tilecnt + 7'd1;
+                            st      <= S_CLEAR;
+                            wait2   <= 3'd0;
+                        end
+                    end
+                    else drain <= drain + 5'd1;
+                end
+
+                S_BAND: begin
+                    if (band_done && rd_done) begin
+                        st      <= S_CLEAR;
+                        wait2   <= 3'd0;
+                        tilecnt <= 7'd0;
+                    end
+                end
+
+                default: st <= S_ORIGIN;
+            endcase
+        end
+    end
+
+endmodule

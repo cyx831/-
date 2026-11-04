@@ -1,0 +1,63 @@
+// ============================================================
+// band_wr: 输出 Band 双缓冲控制 (v4: 增加防覆盖保护)
+// ============================================================
+module band_wr (
+    input  wire        clk,
+    input  wire        rstn,
+    // 写端口
+    input  wire        valid_in,
+    input  wire [10:0] x_in,
+    input  wire [9:0]  y_in,
+    input  wire [15:0] rgb_in,
+    // 读端口
+    input  wire        rd_band_sel, 
+    input  wire [14:0] rd_addr,
+    output reg  [15:0] rd_data,
+    // 握手与状态
+    input  wire        rd_done,     // HDMI读完一个Band拉高一拍
+    output reg         band_ready,  // 告诉HDMI：当前写的桶满了
+    output reg         band_done,   // 内部写满标志
+    output reg         band_idx     
+);
+
+    (* ram_style = "block" *) reg [15:0] band_mem [0:1][0:20479];
+
+    wire [9:0]  y_mod16 = y_in[3:0];
+    wire [14:0] y_offset = ({5'b0, y_mod16} << 10) + ({5'b0, y_mod16} << 8);
+    wire [14:0] wr_addr = y_offset + x_in;
+    
+    wire        write_en = valid_in && (!band_done || rd_done);
+
+    always @(posedge clk) begin
+        if (write_en) begin
+            band_mem[band_idx][wr_addr] <= rgb_in;
+        end
+    end
+
+    always @(posedge clk) begin
+        rd_data <= band_mem[rd_band_sel][rd_addr];
+    end
+
+    // 状态机：写满后如果没读走，就挂起等待
+    always @(posedge clk or negedge rstn) begin
+        if (!rstn) begin
+            band_done  <= 0;
+            band_ready <= 0;
+            band_idx   <= 0;
+        end else begin
+            // 写满了一整行band (最后一个像素)
+            if (write_en && (x_in == 11'd1279) && (y_in[3:0] == 4'd15)) begin
+                band_done  <= 1;
+                band_ready <= 1;
+            end
+            
+            // 收到读完成信号，切换桶，准备写下一个
+            if (band_done && rd_done) begin
+                band_done  <= 0;
+                band_ready <= 0;
+                band_idx   <= ~band_idx;
+            end
+        end
+    end
+
+endmodule

@@ -1,0 +1,169 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// tile_reader (v0.1, functional)
+//
+// Fetches one 32x32 source window from a 16-bit RGB565 frame stored as
+// 640 x 32-bit words per line (2 pixels/word).
+//
+// For each of the 32 rows:
+//   - 16-pixel aligned base : bx = win_x0 & ~15
+//   - offset inside beat    : off = win_x0 - bx (0..14, even)
+//   - read 3 x 256-bit beats starting at word address
+//         {frame_idx, (win_y0+row)*640 + (bx>>1)}
+//     (48 pixels covers off..off+31 for any even win_x0)
+//   - select pixels off..off+31 and write them into the window RAM
+//     through a 16-bit fill port (functional; real-time version widens it).
+//
+// The tr_* port is a simple read-command/data interface.  In simulation it is
+// driven by a fake DDR model; in the real design it must be connected to a
+// tile read engine / arbiter (the existing rd_ctrl 16-beat line burst does not
+// support 3-beat row segments).
+//////////////////////////////////////////////////////////////////////////////////
+module tile_reader_wide #(
+    parameter ADDR_WIDTH = 28,
+    parameter LINE_WORDS = 640
+)(
+    input               pclk,
+    input               rstn,
+    input               start,
+    input  [11:0]       win_x0,
+    input  [11:0]       win_y0,
+    input               frame_idx,
+
+    // read command / data (to tile read engine)
+    output reg          tr_rreq,
+    output [ADDR_WIDTH-1:0] tr_raddr,
+    output [7:0]        tr_rlen,
+    input               tr_rrdy,
+    input  [255:0]      tr_rdata,
+    input               tr_rdata_en,
+    input               tr_rdone,
+
+    // fill port (to window RAM / win_engine)
+    output              fill_we,
+    output [4:0]        fill_row,
+    output [1:0]        fill_col8,
+    output [127:0]      fill_data,
+    output reg          fill_done,
+
+    output              busy
+);
+
+    localparam S_IDLE  = 2'd0;
+    localparam S_ISSUE = 2'd1;
+    localparam S_RD    = 2'd2;
+    localparam S_WR    = 2'd3;
+
+    reg [1:0] st;
+    reg [1:0] beat;
+    reg [4:0] row;
+    reg [1:0] col8;
+
+    reg [11:0] x0_l, y0_l;
+    reg [11:0] bx_l;
+    reg [3:0]  off_l;
+    reg        frm_l;
+
+    reg [255:0] b0, b1, b2;
+
+    assign busy = (st != S_IDLE);
+    assign tr_rlen = 8'd2;          // 3 beats
+
+    wire [11:0] y_row = y0_l + {7'd0, row};
+    wire [21:0] line_base = y_row * LINE_WORDS;
+    wire [21:0] word_addr = line_base + {16'd0, bx_l[11:1]};
+
+    assign tr_raddr = {{(ADDR_WIDTH-23){1'b0}}, frm_l, word_addr};
+
+    // 8-pixel group selection from the 3 x 256-bit beats (48 pixels)
+    wire [5:0] sidx = {2'b0, off_l} + {1'b0, col8, 3'b000};
+    wire [767:0] pixstream = {b2, b1, b0};
+
+    // fill port is combinational so the last group (row31,col8=3) is written
+    // on the same edge that fill_done is raised.
+    assign fill_we   = (st == S_WR);
+    assign fill_row  = row;
+    assign fill_col8 = col8;
+    assign fill_data = pixstream >> (sidx * 16);
+
+    always @(posedge pclk or negedge rstn) begin
+        if (!rstn) begin
+            st        <= S_IDLE;
+            tr_rreq   <= 1'b0;
+            beat      <= 2'd0;
+            row       <= 5'd0;
+            col8      <= 2'd0;
+            fill_done <= 1'b0;
+            x0_l      <= 12'd0;
+            y0_l      <= 12'd0;
+            bx_l      <= 12'd0;
+            off_l     <= 4'd0;
+            frm_l     <= 1'b0;
+            b0        <= 256'd0;
+            b1        <= 256'd0;
+            b2        <= 256'd0;
+        end
+        else begin
+            fill_done <= 1'b0;
+
+            case (st)
+                S_IDLE: begin
+                    tr_rreq <= 1'b0;
+                    if (start) begin
+                        x0_l  <= win_x0;
+                        y0_l  <= win_y0;
+                        bx_l  <= {win_x0[11:4], 4'b0000};
+                        off_l <= win_x0[3:0];
+                        frm_l <= frame_idx;
+                        row   <= 5'd0;
+                        col8  <= 2'd0;
+                        beat  <= 2'd0;
+                        st    <= S_ISSUE;
+                    end
+                end
+
+                S_ISSUE: begin
+                    tr_rreq <= 1'b1;
+                    if (!tr_rrdy) begin
+                        tr_rreq <= 1'b0;
+                        beat    <= 2'd0;
+                        st      <= S_RD;
+                    end
+                end
+
+                S_RD: begin
+                    if (tr_rdata_en) begin
+                        if (beat == 2'd0)      b0 <= tr_rdata;
+                        else if (beat == 2'd1) b1 <= tr_rdata;
+                        else                   b2 <= tr_rdata;
+                        beat <= beat + 2'd1;
+                    end
+                    if (tr_rdone) begin
+                        col8 <= 2'd0;
+                        st  <= S_WR;
+                    end
+                end
+
+                S_WR: begin
+                    if (col8 == 2'd3) begin
+                        col8 <= 2'd0;
+                        if (row == 5'd31) begin
+                            st        <= S_IDLE;
+                            fill_done <= 1'b1;
+                        end
+                        else begin
+                            row <= row + 5'd1;
+                            st  <= S_ISSUE;
+                        end
+                    end
+                    else begin
+                        col8 <= col8 + 2'd1;
+                    end
+                end
+
+                default: st <= S_IDLE;
+            endcase
+        end
+    end
+
+endmodule

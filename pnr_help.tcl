@@ -1,0 +1,3 @@
+pnr -help
+exit
+

@@ -1,0 +1,49 @@
+
+Inputs and Outputs :
++--------------------------------------------------------------------------------------------------------------------------------------+
+| Type       | File Name                                                                                                              
++--------------------------------------------------------------------------------------------------------------------------------------+
+| Input      | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/compile/hdmi_ddr_ov5640_top_fisheye_comp.adf     
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/hdmi_ddr_ov5640_top.fdc                          
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/hdmi_ddr_ov5640_top_fisheye.v         
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/cmos_8_16bit.v                        
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/fram_buf.v                            
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/i2c_com.v                             
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/iic_dri.v                             
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/ms72xx_ctl.v                          
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/ms7200_ctl.v                          
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/ms7210_ctl.v                          
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/power_on_delay.v                      
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/rd_buf.v                              
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/rd_ctrl.v                             
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/reg_config.v                          
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/sync_vg.v                             
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/wr_buf.v                              
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/wr_cmd_trans.v                        
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/wr_ctrl.v                             
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/wr_rd_ctrl_top.v                      
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/src_coord_rd.v                        
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/coord_scan.v                          
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/bbox_rom_case.v                       
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/fisheye_core.v                        
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/fisheye_video_top.v                   
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/tile_rd_bridge.v                      
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/tile_reader_wide.v                    
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/win_engine_wide.v                     
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/band_wr.v                             
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/bilinear565.v                         
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/coord_lut.v                           
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/corr_top.v                            
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/lut_rom.v                             
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/tile_scan_gen.v                       
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/win_req.v                             
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/pll/pll.idf                           
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/wr_fram_buf/wr_fram_buf.idf           
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/rd_fram_buf/rd_fram_buf.idf           
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/source/rtl/DDR3_50H/DDR3_50H.idf                 
+| Output     | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/synthesize/snr.db                                
+|            | D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test/synthesize/synplify.log                          
++--------------------------------------------------------------------------------------------------------------------------------------+
+
+
+Flow Command: synthesize -include_path {D:/FPGA_Competition/10_HDMI_DDR3_OV5640_test/10_HDMI_DDR3_OV5640_test} -selected_syn_tool_opt 1 -top_module hdmi_ddr_ov5640_top_fisheye

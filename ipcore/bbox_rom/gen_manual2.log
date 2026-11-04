@@ -1,0 +1,9 @@
+IP Generator (Version 2022.2-SP1-Lite build 132640)
+Start generating at 2026-10-28 00:06
+Instance: bbox_rom_ip (D:\FPGA_Competition\10_HDMI_DDR3_OV5640_test\10_HDMI_DDR3_OV5640_test\ipcore\bbox_rom\bbox_rom.idf)
+IP: Pango DRM Based ROM (1.5)
+Part: Logos-PGL50H-FBG484--6
+Create directory 'rtl' ...
+Copy 'ipml_rom_wrapper_v1_5.v.xml' ...
+E: IPCompiler 0010: Failed to do copy: copy path: failed to copy file 'D:\FPGA_Competition\10_HDMI_DDR3_OV5640_test\10_HDMI_DDR3_OV5640_test\ipcore\bbox_rom\ipml_rom_wrapper_v1_5.v.xml' to 'D:\FPGA_Competition\10_HDMI_DDR3_OV5640_test\10_HDMI_DDR3_OV5640_test\ipcore\bbox_rom\ipml_rom_wrapper_v1_5.v.xml'.
+Done: 1 error(s), 0 warning(s)

@@ -1,0 +1,200 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// fisheye_video_top (single-buffer win_engine)
+//
+//   INIT    : wait bbox valid, start fill tile 0
+//   PREFILL : wait win_engine fill_done
+//   WAIT2   : 2 pclk, then enable tile scan
+//   RUN     : 256 pixels
+//   DRAIN   : 25 pclk for corr pipeline
+//   REFILL  : advance tile, wait 2 pclk for bbox, start reader
+//
+// band_wr v5: separate band_ready_0/1; HDMI gives rd_bank_sel/rd_addr/rd_done.
+//////////////////////////////////////////////////////////////////////////////////
+module fisheye_video_top (
+    input  wire        pclk,
+    input  wire        rstn,
+
+    input  wire        ddr_clk,
+    input  wire        ddr_rstn,
+    output wire        ddr_rreq,
+    output wire [27:0] ddr_raddr,
+    output wire [31:0] ddr_rd_len,
+    input  wire        ddr_rrdy,
+    input  wire        ddr_rdone,
+    input  wire [255:0] ddr_rdata,
+    input  wire        ddr_rdata_en,
+
+    input  wire        frame_idx,
+
+    input  wire        rd_bank_sel,
+    input  wire [14:0] rd_addr,
+    output wire [15:0] rd_data,
+    input  wire        rd_done,
+    output wire        band_ready_0,
+    output wire        band_ready_1,
+    output wire        band_idx,
+
+    output wire [11:0] win_x0,
+    output wire [11:0] win_y0,
+    output wire [11:0] tile_idx,
+    output wire        win_ready,
+    output wire        dbg_next_tile_valid,
+    output wire        dbg_next_ready,
+    output wire [1:0]  dbg_tile_dst,
+    output wire        dbg_fill_done
+);
+
+    //------------------------------------------------------------------
+    // tile scan
+    //------------------------------------------------------------------
+    reg         enable;
+    wire [11:0] u, v;
+    wire        de_tile;
+    wire [6:0]  tile_tx;
+    wire [5:0]  tile_ty;
+    wire        tile_start;
+
+    tile_scan_gen u_scan (
+        .clk(pclk), .rstn(rstn), .enable(enable),
+        .u_out(u), .v_out(v), .de_out(de_tile),
+        .tile_tx(tile_tx), .tile_ty(tile_ty), .tile_start(tile_start)
+    );
+
+    //------------------------------------------------------------------
+    // window engine
+    //------------------------------------------------------------------
+    wire        fill_we;
+    wire [4:0]  fill_row;
+    wire [1:0]  fill_col8;
+    wire [127:0] fill_data;
+    wire        fill_done;
+    wire [11:0] next_win_x0, next_win_y0;
+    wire        next_tile_valid, next_ready;
+    wire [11:0] src_x, src_y;
+    wire [63:0] row0_pair, row1_pair;
+    wire        win_valid;
+    reg         win_start;
+    reg         tr_start;
+
+    win_engine_wide #(.TILES(3600), .TILE(16), .WIN(32)) u_win (
+        .pclk(pclk), .rstn(rstn), .frame_start(1'b0),
+        .fill_start(tr_start), .start(win_start),
+        .tile_idx(tile_idx), .win_x0(win_x0), .win_y0(win_y0),
+        .next_win_x0(next_win_x0), .next_win_y0(next_win_y0),
+        .next_tile_valid(next_tile_valid),
+        .win_ready(win_ready), .next_ready(next_ready),
+        .fill_we(fill_we), .fill_row(fill_row), .fill_col8(fill_col8),
+        .fill_data(fill_data), .fill_done(fill_done),
+        .src_x(src_x[9:0]), .src_y(src_y[9:0]),
+        .row0_pair(row0_pair), .row1_pair(row1_pair), .win_valid(win_valid)
+    );
+
+    //------------------------------------------------------------------
+    // tile reader + DDR bridge (fills current tile)
+    //------------------------------------------------------------------
+    tile_reader_wide #(.ADDR_WIDTH(28), .LINE_WORDS(640)) u_tr (
+        .pclk(pclk), .prstn(rstn), .ddr_clk(ddr_clk), .ddr_rstn(ddr_rstn),
+        .start(tr_start), .win_x0(next_win_x0), .win_y0(next_win_y0),
+        .frame_idx(frame_idx),
+        .ddr_rreq(ddr_rreq), .ddr_raddr(ddr_raddr), .ddr_rd_len(ddr_rd_len),
+        .ddr_rrdy(ddr_rrdy), .ddr_rdone(ddr_rdone),
+        .ddr_rdata(ddr_rdata), .ddr_rdata_en(ddr_rdata_en),
+        .fill_we(fill_we), .fill_row(fill_row), .fill_col8(fill_col8),
+        .fill_data(fill_data), .fill_done(fill_done), .busy(),
+        .dbg_dst(dbg_tile_dst), .dbg_fill_done(dbg_fill_done)
+    );
+
+    //------------------------------------------------------------------
+    // correction + band buffer (v5 ports)
+    //------------------------------------------------------------------
+    wire vs_c, hs_c, de_c;
+    wire [15:0] rgb_c;
+
+    fisheye_core u_core (
+        .clk(pclk), .rstn(rstn),
+        .vs_in(1'b0), .hs_in(1'b0), .de_in(de_tile),
+        .u(u), .v(v),
+        .win_x0(win_x0), .win_y0(win_y0),
+        .row0_pair(row0_pair), .row1_pair(row1_pair),
+        .win_valid(win_valid),
+        .src_x(src_x), .src_y(src_y),
+        .vs_out(vs_c), .hs_out(hs_c), .de_out(de_c),
+        .rgb_out(rgb_c),
+        .rd_bank_sel(rd_bank_sel), .rd_addr(rd_addr), .rd_data(rd_data),
+        .rd_done(rd_done),
+        .band_ready_0(band_ready_0), .band_ready_1(band_ready_1),
+        .band_idx(band_idx)
+    );
+
+    //------------------------------------------------------------------
+    // scheduler
+    //------------------------------------------------------------------
+    localparam S_INIT    = 3'd0;
+    localparam S_PREFILL = 3'd1;
+    localparam S_WAIT2   = 3'd2;
+    localparam S_RUN     = 3'd3;
+
+    reg [2:0] st;
+    reg [7:0] pixcnt;
+    reg [6:0] tilecnt;
+    reg [1:0] wait_cnt;
+
+    always @(posedge pclk) begin
+        if (!rstn) begin
+            st           <= S_INIT;
+            pixcnt       <= 8'd0;
+            tilecnt      <= 7'd0;
+            wait_cnt     <= 2'd0;
+            tr_start     <= 1'b0;
+            win_start    <= 1'b0;
+            enable       <= 1'b0;
+        end
+        else begin
+            tr_start     <= 1'b0;
+            win_start    <= 1'b0;
+
+            case (st)
+                S_INIT: begin
+                    if (next_tile_valid) begin
+                        tr_start <= 1'b1;
+                        st       <= S_PREFILL;
+                    end
+                end
+
+                S_PREFILL: begin
+                    if (next_ready) begin
+                        win_start <= 1'b1;
+                        tr_start  <= 1'b1;
+                        tilecnt   <= (tilecnt == 7'd79) ? 7'd0 : tilecnt + 7'd1;
+                        wait_cnt  <= 2'd0;
+                        st        <= S_WAIT2;
+                    end
+                end
+
+                S_WAIT2: begin
+                    if (wait_cnt == 2'd1) begin
+                        enable   <= 1'b1;
+                        pixcnt   <= 8'd0;
+                        st       <= S_RUN;
+                    end
+                    else wait_cnt <= wait_cnt + 2'd1;
+                end
+
+                S_RUN: begin
+                    if (pixcnt == 8'd255) begin
+                        enable <= 1'b0;
+                        st     <= S_PREFILL;
+                    end
+                    else pixcnt <= pixcnt + 8'd1;
+                end
+
+                default: st <= S_INIT;
+            endcase
+        end
+    end
+
+assign dbg_next_tile_valid = next_tile_valid;
+    assign dbg_next_ready      = next_ready;
+
+endmodule
